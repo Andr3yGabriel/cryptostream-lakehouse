@@ -1,64 +1,177 @@
- # CryptoStream Lakehouse
+# CryptoStream Lakehouse
 
-## Project Scope and Goal
+## Project Overview
 
-CryptoStream Lakehouse is an end-to-end data pipeline project that ingests near‑real‑time cryptocurrency quotes, computes market indicators with Spark Structured Streaming, and makes the data available for both historical and live analytics.
+CryptoStream Lakehouse is an end-to-end data pipeline that ingests near-real-time cryptocurrency market data, processes it using Spark Structured Streaming, and stores it in a Delta Lake architecture with Bronze, Silver, and Gold layers.
 
-The goal is to demonstrate a complete streaming lakehouse architecture with clear data layers (Bronze, Silver, Gold), strict schema enforcement, and performance/resilience best practices.
+## Current Implementation
 
-## Scope
+### Architecture
 
-### Data Sources
-- Public CoinGecko API (free tier) or Binance API.
-- Top 10 cryptocurrencies by market cap.
-- Data extracted per asset:
-	- Trading pair (e.g., BTC-USD, ETH-USD, SOL-USD)
-	- Current price
-	- 24h trading volume
-	- Collection timestamp
+```mermaid
+graph LR
+    A[CoinGecko API] -->|Python Producer| B(Redpanda / Kafka)
+    B -->|Spark Streaming| C[(Bronze Layer<br>Raw JSON)]
+    C -->|Spark Schema-on-Read| D[(Silver Layer<br>Clean & Typed)]
+    D -->|Spark Watermark| E[(Gold Layer<br>1m Aggregations)]
+    E -->|DuckDB SQL| F[FastAPI]
+    F -->|JSON Endpoint| G{Frontend Dashboard}
+    
+    style C fill:#cd7f32,stroke:#333,stroke-width:2px,color:#fff
+    style D fill:#c0c0c0,stroke:#333,stroke-width:2px,color:#000
+    style E fill:#ffd700,stroke:#333,stroke-width:2px,color:#000
+```
 
-### Functional Requirements
-- **Continuous ingestion (Producer):** a service (Python or Node.js) queries the API every 10–15 seconds and publishes messages to a streaming topic.
-- **Streaming processing (Consumer):** Databricks / Spark reads the stream in real time.
-- **Windowed aggregations:** compute a 5‑minute sliding moving average for price using Spark time window functions.
-- **Lakehouse layers:**
-	- **Bronze:** raw events as they arrive.
-	- **Silver:** cleaned and typed data, deduplicated and enriched with date/time columns (year, month, day, hour).
-	- **Gold:** aggregated tables for analytics (e.g., average price per hour).
-- **Schema enforcement:** incompatible data types should not break the pipeline; invalid events should be handled safely (e.g., routed to a dead‑letter path).
+- **Data Source:** CoinGecko API (free tier)
+- **Message Broker:** RedPanda (Kafka-compatible)
+- **Processing Engine:** Apache Spark 3.5.0 with Delta Lake
+- **Storage Format:** Delta Lake (Parquet-based)
+- **Monitoring:** RedPanda Console
 
-### Non‑Functional Requirements
-- **Latency:** Silver availability in under 1 minute (micro‑batching).
-- **Infrastructure as Code:** local environment (Producer + Kafka) starts with a single `docker-compose up`.
-- **Resilience:** Spark jobs use checkpointing to resume exactly where they stopped.
-- **Scalability:** storage in Delta Lake (optimized Parquet), partitioned by date.
+### Data Pipeline
 
-### Data Visualization Goals
-- Suggested tools: Power BI (Databricks SQL Warehouse) or Streamlit.
-- **Chart:** price vs. 5‑minute moving average (live line chart).
-- **KPIs:** hourly percentage change (e.g., Bitcoin ▲ 1.2%).
-- **Table:** latest ingested transactions.
+#### 1. Producer (`producer/src/`)
 
-## Delivery Plan (4 Weekly Sprints)
+Python-based producer that:
 
-### Week 1 — Foundation and Ingestion
-- Set up the repository and local Kafka stack via Docker Compose.
-- Build the Producer to fetch quotes and publish to the `crypto-prices` topic.
-- Evidence: terminal output showing messages arriving in Kafka.
+- Fetches data from CoinGecko API for 10 cryptocurrencies
+- Publishes to `crypto-raw` Kafka topic every 10-15 seconds
+- Includes: price, 24h volume, market cap, price changes
 
-### Week 2 — Streaming in Databricks
-- Connect Databricks to Kafka.
-- Create notebook `01_Bronze_Ingestion` to stream into the Bronze Delta table.
-- Evidence: continuous inserts visible in a Bronze table query.
+**Tracked Cryptocurrencies:**
+Bitcoin, Ethereum, Solana, Cardano, Ripple, Polkadot, Dogecoin, Chainlink, Tron, Avalanche
 
-### Week 3 — Transformation and Quality (Silver & Gold)
-- Create notebook `02_Silver_Transformation` for parsing, typing, deduplication, and enrichment.
-- Create notebook `03_Gold_Analytics` for moving averages and time aggregations.
-- Apply partitioning to output tables.
-- Evidence: performant analytical queries on final tables.
+#### 2. Bronze Layer (`storage/bronze/crypto_raw`)
 
-### Week 4 — Orchestration and Visualization
-- Schedule notebooks as jobs (or run end‑to‑end manually if limited by Community Edition).
-- Connect Power BI or build a Streamlit dashboard.
-- Produce the requested visualizations.
-- Final documentation with architecture diagram and run instructions.
+Raw ingestion from Kafka:
+
+- Spark Structured Streaming reads from RedPanda
+- Stores raw JSON events with ingestion timestamp
+- No transformations applied
+- Script: `producer/src/bronze_ingestion.py`
+
+#### 3. Silver Layer (`storage/silver/crypto_transformed`)
+
+Cleaned and enriched data:
+
+- Parses JSON and extracts structured fields
+- Adds timestamp columns (year, month, day, hour)
+- Deduplication and schema enforcement
+- Script: `producer/src/silver_transformation.py`
+
+#### 4. Gold Layer (`storage/gold/crypto_metrics_1m`)
+
+Aggregated analytics:
+
+- 1-minute windowed metrics (average, min, max price)
+- Calculated price changes and volatility
+- Ready for analytics and visualization
+- Script: `producer/src/gold_aggregation.py`
+
+## Project Structure
+
+```bash
+cryptostream-lakehouse/
+├── infra/
+│   └── docker-compose.yml    # RedPanda + Spark cluster
+├── producer/
+│   ├── requirements.txt       # Python dependencies
+│   └── src/
+│       ├── main.py           # Producer application
+│       ├── api.py            # API client
+│       ├── bronze_ingestion.py
+│       ├── silver_transformation.py
+│       ├── gold_aggregation.py
+│       ├── verify_silver.py
+│       └── verify_gold.py
+├── storage/
+│   ├── bronze/               # Raw data layer
+│   ├── silver/               # Transformed data layer
+│   ├── gold/                 # Aggregated metrics layer
+│   └── checkpoints/          # Spark streaming checkpoints
+└── README.MD
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Python 3.8+
+- PySpark 3.5.8
+
+### Setup
+
+1. **Start Infrastructure:**
+
+   ```bash
+   cd infra
+   docker-compose up -d
+   ```
+
+   - RedPanda: `localhost:19092`
+   - RedPanda Console: `http://localhost:8080`
+   - Spark Master UI: `http://localhost:8090`
+
+2. **Install Python Dependencies:**
+
+   ```bash
+   cd producer
+   pip install -r requirements.txt
+   ```
+
+3. **Run Producer:**
+
+   ```bash
+   cd producer/src
+   python main.py
+   ```
+
+4. **Run Streaming Pipeline:**
+
+   ```bash
+   # Bronze ingestion
+   python bronze_ingestion.py
+   
+   # Silver transformation (in separate terminal)
+   python silver_transformation.py
+   
+   # Gold aggregation (in separate terminal)
+   python gold_aggregation.py
+   ```
+
+5. **Verify Data:**
+
+   ```bash
+   python verify_silver.py
+   python verify_gold.py
+   ```
+
+## Features Implemented
+
+✅ Continuous data ingestion from CoinGecko API  
+✅ Kafka/RedPanda message streaming  
+✅ Spark Structured Streaming processing  
+✅ Delta Lake storage with ACID transactions  
+✅ Bronze → Silver → Gold medallion architecture  
+✅ Windowed aggregations (1-minute windows)  
+✅ Checkpointing for fault tolerance  
+✅ Local development environment via Docker
+✅ RESTful API serving Gold metrics with millisecond latency
+✅ In-memory analytical queries using DuckDB
+
+## Technology Stack
+
+- **Python 3.x** - Producer and data scripts
+- **Apache Spark 3.5.0** - Stream processing
+- **Delta Lake 3.1.0** - Storage format
+- **RedPanda** - Kafka-compatible message broker
+- **Docker** - Containerization
+- **CoinGecko API** - Data source
+- **FastAPI & Uvicorn** - REST API framework
+- **DuckDB** - In-process analytical database
+
+## Next Steps
+
+- **Data Persistence** - Save fetched data in a real database
+- **Dashboard** - Create a web page to show informational dashboards with the currencies prices evolutions
