@@ -15,7 +15,6 @@ graph LR
     C -->|Spark Schema-on-Read| D[(Silver Layer<br>Clean & Typed)]
     D -->|Spark Watermark| E[(Gold Layer<br>1m Aggregations)]
     E -->|DuckDB SQL| F[FastAPI]
-    F -->|JSON Endpoint| G{Frontend Dashboard}
     
     style C fill:#cd7f32,stroke:#333,stroke-width:2px,color:#fff
     style D fill:#c0c0c0,stroke:#333,stroke-width:2px,color:#000
