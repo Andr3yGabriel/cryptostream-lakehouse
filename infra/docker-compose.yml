@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v23.2.19
@@ -9,9 +8,10 @@ services:
       - --overprovisioned
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      # Removemos as linhas do pandaproxy para evitar conflito de porta
     ports:
       - "19092:19092"
+    networks:
+      - data-network
     healthcheck:
       test: ["CMD", "rpk", "cluster", "health"]
       interval: 5s
@@ -33,3 +33,35 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
+    networks:
+      - data-network
+
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    user: root
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "8090:8080"
+      - "7077:7077"
+    networks:
+      - data-network
+
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    user: root
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1G
+    networks:
+      - data-network
+    volumes:
+      - ./notebooks:/opt/spark/work-dir/notebooks
+
+networks:
+  data-network:
+    driver: bridge
