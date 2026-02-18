@@ -2,3 +2,4 @@
 storage/
 __pycache__/
 .ivy2/
+.env
