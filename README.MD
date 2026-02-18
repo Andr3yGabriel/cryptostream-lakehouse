@@ -15,6 +15,7 @@ graph LR
     C -->|Spark Schema-on-Read| D[(Silver Layer<br>Clean & Typed)]
     D -->|Spark Watermark| E[(Gold Layer<br>1m Aggregations)]
     E -->|DuckDB SQL| F[FastAPI]
+    F -->|JSON Endpoint| G{Frontend Dashboard}
     
     style C fill:#cd7f32,stroke:#333,stroke-width:2px,color:#fff
     style D fill:#c0c0c0,stroke:#333,stroke-width:2px,color:#000
@@ -67,17 +68,36 @@ Aggregated analytics:
 - Ready for analytics and visualization
 - Script: `producer/src/gold_aggregation.py`
 
+#### 5. Serving Layer (`producer/src/api.py`)
+
+High-performance API for data consumption:
+
+- FastAPI server integrated with DuckDB
+- Queries Delta Lake files directly bypassing Spark overhead
+- Resolves timezone shifts and returns JSON metrics with millisecond latency
+
+#### 6. Visualization (`dashboard/`)
+
+Real-time Frontend Dashboard:
+
+- Next.js application built with App Router and Tailwind CSS v4
+- Interactive Candlestick charts powered by TradingView's Lightweight Charts
+- Dynamic polling every 10 seconds for real-time updates
+
 ## Project Structure
 
 ```bash
 cryptostream-lakehouse/
+├── dashboard/                # Next.js frontend application
+│   ├── src/app/              # UI components, layout, and global styles
+│   └── package.json          # Node.js dependencies
 ├── infra/
 │   └── docker-compose.yml    # RedPanda + Spark cluster
 ├── producer/
-│   ├── requirements.txt       # Python dependencies
+│   ├── requirements.txt      # Python dependencies
 │   └── src/
 │       ├── main.py           # Producer application
-│       ├── api.py            # API client
+│       ├── api.py            # FastAPI serving layer
 │       ├── bronze_ingestion.py
 │       ├── silver_transformation.py
 │       ├── gold_aggregation.py
@@ -139,12 +159,23 @@ cryptostream-lakehouse/
    python gold_aggregation.py
    ```
 
-5. **Verify Data:**
+5. **Start the API Server:**
 
    ```bash
-   python verify_silver.py
-   python verify_gold.py
+   # In a separate terminal, from the producer/src directory
+   uvicorn api:app --reload
    ```
+
+6. **Run the Frontedn Dashboard:**
+
+   ```bash
+   # In a separate terminal, from the project root
+   cd dashboard
+   yarn install
+   yarn dev
+   ```
+
+Access the dashboard at `http://localhost:3000`
 
 ## Features Implemented
 
@@ -155,22 +186,32 @@ cryptostream-lakehouse/
 ✅ Bronze → Silver → Gold medallion architecture  
 ✅ Windowed aggregations (1-minute windows)  
 ✅ Checkpointing for fault tolerance  
-✅ Local development environment via Docker
-✅ RESTful API serving Gold metrics with millisecond latency
-✅ In-memory analytical queries using DuckDB
+✅ Local development environment via Docker  
+✅ RESTful API serving Gold metrics with millisecond latency  
+✅ In-memory analytical queries using DuckDB  
+✅ Interactive Next.js Frontend with Dark Mode & Glassmorphism  
+✅ Real-time Candlestick charting with TradingView integration  
 
 ## Technology Stack
+
+**Backend & Data Engineering:**
 
 - **Python 3.x** - Producer and data scripts
 - **Apache Spark 3.5.0** - Stream processing
 - **Delta Lake 3.1.0** - Storage format
 - **RedPanda** - Kafka-compatible message broker
-- **Docker** - Containerization
-- **CoinGecko API** - Data source
-- **FastAPI & Uvicorn** - REST API framework
 - **DuckDB** - In-process analytical database
+- **FastAPI & Uvicorn** - REST API framework
+
+**Frontend:**
+
+- **Next.js 15+ & React** - UI Framework
+- **Tailwind CSS v4** - Styling
+- **Lightweight Charts** - Financial data visualization
+- **Yarn** - Package manager
 
 ## Next Steps
 
-- **Data Persistence** - Save fetched data in a real database
-- **Dashboard** - Create a web page to show informational dashboards with the currencies prices evolutions
+- **Cloud Deployment:** Migrate local Docker infrastructure to cloud services (e.g., AWS MSK, Databricks, or GCP Dataproc).
+- **AI Integration:** Implement a conversational AI assistant to analyze the Gold layer trends and suggest market insights in real-time.
+- **Alerting System:** Add webhooks or email alerts when high price volatility is detected within a 1-minute window.
