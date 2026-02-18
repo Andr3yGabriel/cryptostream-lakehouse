@@ -15,11 +15,18 @@ graph LR
     C -->|Spark Schema-on-Read| D[(Silver Layer<br>Clean & Typed)]
     D -->|Spark Watermark| E[(Gold Layer<br>1m Aggregations)]
     E -->|DuckDB SQL| F[FastAPI]
+    E -->|DuckDB SQL| H[Alert Worker]
+    H -->|Threshold > X%| I(Discord Webhook)
+    H -->|JSON Log| J[(MongoDB<br>NoSQL)]
     F -->|JSON Endpoint| G{Frontend Dashboard}
+    J -.->|Query| F
     
     style C fill:#cd7f32,stroke:#333,stroke-width:2px,color:#fff
     style D fill:#c0c0c0,stroke:#333,stroke-width:2px,color:#000
     style E fill:#ffd700,stroke:#333,stroke-width:2px,color:#000
+    style H fill:#ff5555,stroke:#333,stroke-width:2px,color:#fff
+    style I fill:#5865F2,stroke:#333,stroke-width:2px,color:#fff
+    style J fill:#4db33d,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 - **Data Source:** CoinGecko API (free tier)
@@ -84,6 +91,15 @@ Real-time Frontend Dashboard:
 - Interactive Candlestick charts powered by TradingView's Lightweight Charts
 - Dynamic polling every 10 seconds for real-time updates
 
+#### 7. Monitoring & Alerting (`producer/src/alert_worker.py`)
+
+Background worker for proactive anomaly detection:
+
+- Polls Gold Layer (DuckDB) every 60 seconds
+- Calculates volatility percentage: `((Max - Min) / Min) * 100`
+- Triggers Discord Webhook if volatility > Threshold (default 0.02%)
+- Persists alert logs to MongoDB for historical auditing
+
 ## Project Structure
 
 ```bash
@@ -121,32 +137,41 @@ cryptostream-lakehouse/
 
 ### Setup
 
-1. **Start Infrastructure:**
-
-   ```bash
-   cd infra
-   docker-compose up -d
-   ```
-
-   - RedPanda: `localhost:19092`
-   - RedPanda Console: `http://localhost:8080`
-   - Spark Master UI: `http://localhost:8090`
-
-2. **Install Python Dependencies:**
+1. **Install Python Dependencies:**
 
    ```bash
    cd producer
    pip install -r requirements.txt
    ```
 
-3. **Run Producer:**
+2. **Environment Configuration:**
+   Create a `.env` (also check `.env.example` to build it) file in the root directory:
+
+   ```env
+   MONGO_URI=mongodb://admin:password@localhost:27017/
+   MONGO_USERNAME=admin
+   MONGO_PASSWORD=password
+   WEBHOOK_URL=[https://discord.com/api/webhooks/YOUR_WEBHOOK_URL](https://discord.com/api/webhooks/YOUR_WEBHOOK_URL)
+   ```
+
+3. **Start Infrastructure:**
+
+   ```bash
+   # Run from project root to load .env correctly
+   docker-compose --env-file .env -f infra/docker-compose.yml up -d
+   ```
+
+   - RedPanda: [http://localhost:19092](http://localhost:19092)
+   - Mongo Express: [http://localhost:8081](http://localhost:8081)
+
+4. **Run Producer:**
 
    ```bash
    cd producer/src
    python main.py
    ```
 
-4. **Run Streaming Pipeline:**
+5. **Run Streaming Pipeline:**
 
    ```bash
    # Bronze ingestion
@@ -159,14 +184,14 @@ cryptostream-lakehouse/
    python gold_aggregation.py
    ```
 
-5. **Start the API Server:**
+6. **Start the API Server:**
 
    ```bash
    # In a separate terminal, from the producer/src directory
    uvicorn api:app --reload
    ```
 
-6. **Run the Frontedn Dashboard:**
+7. **Run the Frontedn Dashboard:**
 
    ```bash
    # In a separate terminal, from the project root
@@ -175,7 +200,7 @@ cryptostream-lakehouse/
    yarn dev
    ```
 
-Access the dashboard at `http://localhost:3000`
+Access the dashboard at [http://localhost:3000](http://localhost:3000)
 
 ## Features Implemented
 
@@ -196,12 +221,14 @@ Access the dashboard at `http://localhost:3000`
 
 **Backend & Data Engineering:**
 
-- **Python 3.x** - Producer and data scripts
+- **Python 3.x** - Producer, Workers, and Scripts
 - **Apache Spark 3.5.0** - Stream processing
 - **Delta Lake 3.1.0** - Storage format
 - **RedPanda** - Kafka-compatible message broker
-- **DuckDB** - In-process analytical database
+- **DuckDB** - In-process OLAP database
+- **MongoDB** - NoSQL database for event logs
 - **FastAPI & Uvicorn** - REST API framework
+- **Discord Webhooks** - Alerting channel
 
 **Frontend:**
 
