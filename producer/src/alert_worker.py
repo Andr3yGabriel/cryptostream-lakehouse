@@ -2,13 +2,19 @@ import duckdb
 import requests
 import json
 from dotenv import load_dotenv
+from pymongo import MongoClient
+from datetime import datetime, timezone
 import os
 
 load_dotenv()  # Load environment variables from .env file
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+MONGO_URI = os.getenv("MONGO_URI")
 
 conn = duckdb.connect()
+mongo_client = MongoClient(MONGO_URI)
+mongo_db = mongo_client["cryptostream"]
+alerts_collection = mongo_db["alerts"]
 gold_layer_path = "./storage/gold/crypto_metrics_1m"
 
 print("Loading Delta Lake extension for DuckDB...")
@@ -69,40 +75,81 @@ def generate_json_message_for_discord(metrics: dict, volatility: float) -> dict:
     avg_price = metrics['avg_price']
     min_price = metrics['min_price']
     max_price = metrics['max_price']
-
-    # We use the already calculated volatility passed as an argument
+    
+    isSmallCoin = coin_id.lower() in ['dogecoin', 'cardano', 'ripple', 'tron', 'polkadot', 'avalanche-2', 'chainlink']
+    decimal_places = 4 if isSmallCoin else 2
+    # We use the already calculated volatility passed as an argument.
+    emoji = "📈" if volatility > 0 else "📉"
     message = {
-        "content": f"🚨 **{coin_id} Volatility Alert!** 🚨\n"
-                   f"**Average Price:** ${avg_price:.2f}\n"
-                   f"**Min Price:** ${min_price:.2f}\n"
-                   f"**Max Price:** ${max_price:.2f}\n"
+        "content": f"🚨 **{coin_id} Volatility Alert!** {emoji}\n"
+                   f"**Average Price:** ${avg_price:.{decimal_places}f}\n"
+                   f"**Min Price:** ${min_price:.{decimal_places}f}\n"
+                   f"**Max Price:** ${max_price:.{decimal_places}f}\n"
                    f"**Change:** {volatility:.2f}% in the last minute!"
     }
     return message
 
-def send_alert_if_volatile(coin_id: str, threshold: float = 0.02):
+def send_alert_if_volatile(coin_id: str, threshold: float = 1.0):
     metrics = get_metrics(coin_id)
-    if metrics:
-        # Calculate once
-        volatility = calculate_volatility(metrics['avg_price'], metrics['min_price'], metrics['max_price'])
+    
+    if not metrics:
+        print(f"⚠️ No data found for {coin_id}. Is the Spark pipeline running?")
+        return
+
+    current_time = datetime.now(timezone.utc).timestamp()
+    data_time = metrics['window_end']
+    
+    lag = current_time - data_time
+    if lag > 300:
+        print(f"⚠️ Stale data for {coin_id}. Lag: {lag:.0f}s. Skipping alert.")
+        return
+
+    # Calculate once
+    volatility = calculate_volatility(metrics['avg_price'], metrics['min_price'], metrics['max_price'])
+    
+    print(f"🔍 Checking {coin_id.ljust(10)} | Volatility: {volatility:.4f}% | Threshold: {threshold}%")
+
+    # We use absolute value so it triggers on both pumps (+) and dumps (-)
+    if abs(volatility) > threshold:
+        # Pass the calculated volatility to the generator
+        message = generate_json_message_for_discord(metrics, volatility)
+        response = requests.post(WEBHOOK_URL, json=message)
         
-        # We use absolute value so it triggers on both pumps (+) and dumps (-)
-        if abs(volatility) > threshold:
-            # Pass the calculated volatility to the generator
-            message = generate_json_message_for_discord(metrics, volatility)
-            response = requests.post(WEBHOOK_URL, json=message)
+        if response.status_code != 204:
+            print(f"❌ Failed to send Discord alert for {coin_id}: {response.status_code}")
+        else:
+            print(f"✅ ALERT SENT for {coin_id.capitalize()}!")
             
-            if response.status_code != 204:
-                print(f"Failed to send Discord alert for {coin_id}: {response.status_code}")
-            else:
-                print(f"Alert sent for {coin_id.capitalize()}: Volatility is {volatility:.2f}%")
-                print(f"Alert sent for {coin_id.capitalize()}: Volatility is {volatility:.2f}%")
-                
+            # Save alert to MongoDB
+            alert_record = {
+                "coin_id": coin_id,
+                "avg_price": metrics['avg_price'],
+                "min_price": metrics['min_price'],
+                "max_price": metrics['max_price'],
+                "volatility": volatility,
+                "timestamp": datetime.now(timezone.utc)  # Store in UTC
+            }
+            try:
+                alerts_collection.insert_one(alert_record)
+                print(f"💾 Alert saved to MongoDB.")
+            except Exception as e:
+                print(f"❌ MongoDB Error: {e}")
+
 # Loop this script to check for volatility in any crypto every minute
 if __name__ == "__main__":
     import time
+    
+    TEST_THRESHOLD = 0.02 
     COINS = "bitcoin,ethereum,solana,cardano,ripple,polkadot,dogecoin,chainlink,tron,avalanche-2"
+    
+    print(f"🚀 Alert Worker started! Monitoring {len(COINS.split(','))} coins...")
+    print(f"🎯 Threshold set to: {TEST_THRESHOLD}%")
+    print("-" * 50)
+
     while True:
         for coin in COINS.split(','):
-            send_alert_if_volatile(coin)
-        time.sleep(60)  # Wait for 1 minute before checking again
+            send_alert_if_volatile(coin, threshold=TEST_THRESHOLD)
+        
+        print("-" * 50)
+        print("💤 Sleeping for 60 seconds...")
+        time.sleep(60)
