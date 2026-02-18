@@ -1,12 +1,22 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import duckdb
 
 app = FastAPI()
 gold_layer_path = "./storage/gold/crypto_metrics_1m"
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 conn = duckdb.connect()
 
 print("Loading Delta Lake extension for DuckDB...")
+conn.execute("SET TimeZone='UTC';")
 conn.execute("INSTALL delta;")
 conn.execute("LOAD delta;")
 print("DuckDB ready for reading!")
@@ -15,8 +25,8 @@ print("DuckDB ready for reading!")
 def get_metrics(coin_id: str):
     query = f"""
         SELECT 
-            "window".start AS window_start, 
-            "window".end AS window_end,
+            epoch("window".start) AS window_start, 
+            epoch("window".end) AS window_end,
             coin_id,
             avg_price,
             min_price,
@@ -27,9 +37,6 @@ def get_metrics(coin_id: str):
         LIMIT 10
     """
     result_df = conn.execute(query).df()
-    
-    result_df["window_start"] = result_df["window_start"].astype(str)
-    result_df["window_end"] = result_df["window_end"].astype(str)
 
     return result_df.to_dict(orient="records")
     
